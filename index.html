@@ -1,91 +1,178 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="pt-BR">
 <head>
-    <meta charset="utf-8" />
-    <title>Centro do Recife: Uso residencial + Uso hoteleiro</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.css" rel="stylesheet" />
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&display=swap" rel="stylesheet">
-    <style>
-        body { margin: 0; padding: 0; font-family: 'Montserrat', sans-serif; background-color: #f8f9fa; }
-        #map { position: absolute; top: 70px; bottom: 0; width: 100%; }
-        .title { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 2; background: rgba(34, 34, 34, 0.9); padding: 10px 20px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); font-family: 'Montserrat', sans-serif; font-size: 18px; font-weight: bold; color: #fff; }
-        .controls { position: absolute; top: 70px; left: 10px; z-index: 1; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); width: 250px; font-family: 'Montserrat', sans-serif; }
-        .summary { position: absolute; top: 70px; right: 10px; z-index: 1; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); font-family: 'Montserrat', sans-serif; width: 300px; font-size: 12px; }
-        .legend { position: absolute; bottom: 10px; left: 10px; z-index: 1; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); font-family: 'Montserrat', sans-serif; font-size: 12px; }
-        .controls label, .controls select { margin-bottom: 10px; width: 100%; padding: 8px; font-size: 14px; }
-        .controls select, .controls input { border: 1px solid #ccc; border-radius: 4px; }
-        .popup-content { font-family: 'Montserrat', sans-serif; font-size: 12px; line-height: 1.5; background: rgba(255, 255, 255, 0.9); padding: 10px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
-        .popup-content h3 { margin: 0; font-size: 14px; color: #333; }
-        .popup-content p { margin: 5px 0; }
-        .marker { background-size: cover; width: 30px; height: 30px; cursor: pointer; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border-radius: 50%; }
-        .marker-label { font-size: 12px; text-align: center; color: white; text-shadow: 0px 0px 5px black; position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
-        .summary-table { width: 100%; border-collapse: collapse; }
-        .summary-table th, .summary-table td { padding: 4px; text-align: left; border-bottom: 1px solid #ddd; }
-        .summary-table th { background-color: #f2f2f2; }
-        .legend-item { display: flex; align-items: center; margin-bottom: 5px; }
-        .legend-color { width: 12px; height: 12px; border-radius: 50%; margin-right: 5px; }
-    </style>
+  <meta charset="utf-8" />
+  <title>Gestão territorial: centro do Recife</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.css" rel="stylesheet" />
+  <style>
+    :root {
+      --panel-bg: rgba(255, 255, 255, 0.9);
+      --text: #1a1a1a;
+      --accent: #007AFF;
+    }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--text); background: #fff; font-size: 13px; }
+    #map { position: absolute; inset: 0; }
+
+    .panel {
+      position: absolute;
+      z-index: 5;
+      background: var(--panel-bg);
+      border: 1px solid rgba(0,0,0,0.12);
+      border-radius: 4px;
+      padding: 12px;
+      backdrop-filter: blur(8px);
+    }
+
+    .title { top: 10px; left: 50%; transform: translateX(-50%); width: auto; padding: 6px 16px; }
+    .title h1 { font-size: 12px; font-weight: 700; margin: 0; text-transform: uppercase; letter-spacing: 1.5px; }
+
+    .controls { top: 50px; left: 10px; width: 230px; max-height: 85vh; overflow-y: auto; }
+    
+    .summary { top: 50px; right: 10px; width: 270px; font-size: 11px; }
+    
+    .chart-panel { bottom: 20px; right: 10px; width: 330px; transition: all 0.3s ease; }
+    .chart-panel.minimized { height: 35px; width: 150px; overflow: hidden; }
+    .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; cursor: pointer; }
+    #chartCanvas { width: 100% !important; height: 170px !important; }
+
+    .legend { bottom: 20px; left: 10px; width: auto; padding: 10px; }
+    .legend-grid { display: grid; gap: 5px; font-size: 10px; }
+
+    h3 { margin: 18px 0 8px 0; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #444; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+    h3:first-child { margin-top: 0; }
+    
+    label { display: block; font-size: 10px; font-weight: 700; color: #777; margin-top: 10px; }
+    select { width: 100%; font-size: 12px; padding: 4px; border-radius: 2px; border: 1px solid #ccc; margin-bottom: 8px; background: #fff; }
+
+    .header-row { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; margin-bottom: 8px; padding-bottom: 4px; }
+    .header-row h3 { border: none; margin: 0; }
+    
+    .btn-icon { 
+      background: none; 
+      border: none; 
+      cursor: pointer; 
+      color: #333; 
+      display: flex; 
+      align-items: center; 
+      padding: 0; 
+      transition: color 0.2s ease;
+    }
+    .btn-icon:hover { color: var(--accent); }
+
+    .layer-item { display: flex; align-items: center; gap: 8px; font-size: 11px; margin-bottom: 8px; cursor: pointer; }
+    .line-indicator { width: 24px; height: 0; border-top-width: 3px; border-top-style: dashed; flex-shrink: 0; }
+
+    .type-pill { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.2); }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 5px; }
+    th, td { text-align: left; padding: 5px 0; border-bottom: 1px solid rgba(0,0,0,0.05); }
+    tfoot tr td { border-top: 2px solid #333; font-weight: 700; padding-top: 8px; }
+
+    .mapboxgl-popup-content { padding: 0; border-radius: 8px; overflow: hidden; width: 250px; box-shadow: 0 10px 20px rgba(0,0,0,0.15); }
+    .popup-header { background: #f8f8f8; padding: 10px 12px; border-bottom: 1px solid #eee; }
+    .popup-header h4 { margin: 0; font-size: 13px; font-weight: 700; color: #111; }
+    .popup-body { padding: 12px; line-height: 1.4; max-height: 250px; overflow-y: auto; }
+    .popup-body p { margin: 5px 0; font-size: 11px; color: #444; border-bottom: 1px solid #f9f9f9; padding-bottom: 3px; }
+    .popup-body p:last-child { border: none; }
+    .sv-img { width: 100%; height: 140px; background: #ddd; object-fit: cover; display: block; }
+
+    @media (max-width: 820px) { .summary, .chart-panel { display: none; } }
+  </style>
 </head>
 <body>
-    <div id="map"></div>
-    <div class="title">Centro do Recife: Uso residencial + Uso hoteleiro</div>
-    <div class="controls">
-        <label for="typeFilter">Filtrar por Tipo</label>
-        <select id="typeFilter">
-            <option value="all">Todos</option>
-            <option value="coliving">Coliving</option>
-            <option value="flat">Flat</option>
-            <option value="his">HIS</option>
-            <option value="hotel">Hotel</option>
-            <option value="hostel">Hostel</option>
-            <option value="ocupação">Ocupação</option>
-            <option value="pousada">Pousada</option>
-            <option value="res-misto">Residencial Misto</option>
-            <option value="res-multifamiliar">Residencial Multifamiliar</option>
-        </select>
-        <label for="bairroFilter">Filtrar por Bairro</label>
-        <select id="bairroFilter">
-            <option value="all">Todos</option>
-        </select>
-        <label for="statusFilter">Filtrar por Situação</label>
-        <select id="statusFilter">
-            <option value="all">Todas</option>
-            <option value="alvará de construção">Alvará de construção</option>
-            <option value="em obra">Em obra</option>
-            <option value="análise de projeto">Análise de projeto</option>
-            <option value="em projeto">Em projeto</option>
-            <option value="aberto">Aberto</option>
-        </select>
+  <div id="map"></div>
+  
+  <div class="title panel">
+    <h1>Gestão territorial no Recife</h1>
+  </div>
+
+  <div class="controls panel">
+    <div class="header-row">
+      <h3>Análise de dados</h3>
+      <button id="downloadCsv" class="btn-icon" title="baixar dados">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+      </button>
     </div>
-    <div class="summary">
-        <h3>Resumo</h3>
-        <table class="summary-table">
-            <thead>
-                <tr>
-                    <th>Tipo</th>
-                    <th>População Total</th>
-                    <th>Unidades Totais</th>
-                </tr>
-            </thead>
-            <tbody id="summaryTableBody">
-            </tbody>
-        </table>
+    
+    <label>Dimensionar pontos</label>
+    <select id="sizeFilter">
+      <option value="padrao" selected>Tamanho fixo</option>
+      <option value="populacao">População estimada</option>
+      <option value="area">Área construída</option>
+    </select>
+    
+    <label>Filtrar tipologia</label>
+    <select id="typeFilter"></select>
+    
+    <label>Bairro</label>
+    <select id="bairroFilter"></select>
+    
+    <label>Situação</label>
+    <select id="statusFilter"></select>
+
+    <h3>Perímetros legais</h3>
+    <div class="layer-item">
+      <input type="checkbox" id="check-recentro"> 
+      <div class="line-indicator" style="border-color: #FF3B30;"></div>
+      Recentro
     </div>
-    <div class="legend">
-        <h3>Legenda</h3>
-        <div class="legend-item"><div class="legend-color" style="background-color: #e41a1c;"></div>Coliving</div>
-        <div class="legend-item"><div class="legend-color" style="background-color: #377eb8;"></div>Flat</div>
-        <div class="legend-item"><div class="legend-color" style="background-color: #4daf4a;"></div>HIS</div>
-        <div class="legend-item"><div class="legend-color" style="background-color: #c42f44;"></div>Hotel</div>
-        <div class="legend-item"><div class="legend-color" style="background-color: #984ea3;"></div>Hostel</div>
-        <div class="legend-item"><div class="legend-color" style="background-color: #ff7f00;"></div>Ocupação</div>
-        <div class="legend-item"><div class="legend-color" style="background-color: #ffff33;"></div>Pousada</div>
-        <div class="legend-item"><div class="legend-color" style="background-color: #a65628;"></div>Residencial Misto</div>
-        <div class="legend-item"><div class="legend-color" style="background-color: #f781bf;"></div>Residencial Multifamiliar</div>
+    <div class="layer-item">
+      <input type="checkbox" id="check-ircentro"> 
+      <div class="line-indicator" style="border-color: #34C759;"></div>
+      IRCentro
     </div>
-    <script src="config.js"></script>
-    <script src="https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.js"></script>
-    <script src="script.js"></script>
+    <div class="layer-item">
+      <input type="checkbox" id="check-porto"> 
+      <div class="line-indicator" style="border-color: #007AFF;"></div>
+      Porto Digital
+    </div>
+  </div>
+
+  <div class="summary panel">
+    <h3>Resumo informativo</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Tipo</th>
+          <th>Qtd</th>
+          <th>Pop.</th>
+        </tr>
+      </thead>
+      <tbody id="summaryTableBody"></tbody>
+      <tfoot id="summaryFooter"></tfoot>
+    </table>
+  </div>
+
+  <div class="chart-panel panel" id="chartContainer">
+    <div class="chart-header" onclick="toggleChart()">
+      <h3 id="chartTitle">Frequência por tipo</h3>
+      <span>▼</span>
+    </div>
+    <canvas id="chartCanvas"></canvas>
+  </div>
+
+  <div class="legend panel">
+    <div id="legendGrid" class="legend-grid"></div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="script.js"></script>
+  <script>
+    function toggleChart() {
+      const panel = document.getElementById('chartContainer');
+      panel.classList.toggle('minimized');
+      const icon = panel.querySelector('.chart-header span');
+      icon.textContent = panel.classList.contains('minimized') ? '▲' : '▼';
+    }
+  </script>
 </body>
 </html>

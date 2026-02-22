@@ -1,248 +1,250 @@
-mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
+(function () {
+  if (typeof MAPBOX_ACCESS_TOKEN === "undefined") return;
+  mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
 
-const map = new mapboxgl.Map({
-    container: 'map',
-    style: 'mapbox://styles/mapbox/light-v11',
-    center: [-34.8781405, -8.0641775],
+  let chartInstance = null;
+  let allData = [];
+
+  const TYPE_COLOR = {
+    "Coliving": "#FF00FF", "Flat": "#007AFF", "HIS": "#34C759", "Hotel": "#FF9500", 
+    "Hostel": "#5856D6", "Ocupação": "#FF3B30", "Pousada": "#AF52DE", 
+    "Res. Misto": "#5AC8FA", "Res. Multifamiliar": "#1C1C1E" 
+  };
+
+  const map = new mapboxgl.Map({
+    container: "map", 
+    style: "mapbox://styles/mapbox/light-v11",
+    center: [-34.8781, -8.0641], 
     zoom: 15
-});
+  });
 
-const colors = {
-    'coliving': '#e41a1c',
-    'flat': '#377eb8',
-    'his': '#4daf4a',
-    'hotel': '#c42f44',
-    'hostel': '#984ea3',
-    'ocupação': '#ff7f00',
-    'pousada': '#ffff33',
-    'res-misto': '#a65628',
-    'res-multifamiliar': '#f781bf'
-};
+  function parseNumber(v) {
+    if (!v) return null;
+    const s = v.toString().replace(/\s/g, "").replace("R$", "").replace("m²", "").replace(/\./g, "").replace(",", ".");
+    const n = parseFloat(s.replace(/[^\d.-]/g, ""));
+    return isNaN(n) ? null : n;
+  }
 
-const dataUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEETS_ID}/values/Lista?key=${GOOGLE_API_KEY}`;
-
-async function loadGoogleSheetsData(url) {
-    try {
-        const response = await fetch(url);
-        const data = await response.json();
-        if (!data.values) {
-            console.error('Nenhum dado encontrado na resposta da API.');
-            return [];
-        }
-        const rows = data.values;
-        const headers = rows[0];
-        return rows.slice(1).map(row => {
-            let obj = {};
-            row.forEach((value, index) => {
-                obj[headers[index]] = value;
-            });
-            return obj;
-        });
-    } catch (error) {
-        console.error('Erro ao carregar dados do Google Sheets:', error);
-        return [];
+  function splitLabel(str) {
+    if (!str || str.length <= 15) return str;
+    const words = str.split(' ');
+    let line1 = "";
+    let line2 = "";
+    for (let i = 0; i < words.length; i++) {
+      if ((line1 + words[i]).length < 18) {
+        line1 += (line1 === "" ? "" : " ") + words[i];
+      } else {
+        line2 = words.slice(i).join(' ');
+        break;
+      }
     }
-}
+    return line2 === "" ? line1 : [line1, line2];
+  }
 
-function convertCoordinates(coord) {
-    return parseFloat(coord.replace(',', '.'));
-}
+  function downloadCSV() {
+    if (!allData.length) return;
+    const headers = Object.keys(allData[0]).filter(k => !k.startsWith('_'));
+    const csvRows = [headers.join(',')];
+    for (const row of allData) {
+      const values = headers.map(header => {
+        const val = row[header] ?? "";
+        return `"${val.toString().replace(/"/g, '""')}"`;
+      });
+      csvRows.push(values.join(','));
+    }
+    const blob = new Blob(["\ufeff" + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute("download", "dados_territoriais_recife.csv");
+    link.click();
+  }
 
-function createGeoJSON(data) {
-    return {
-        type: 'FeatureCollection',
-        features: data.map(point => {
-            const lng = convertCoordinates(point.longitude);
-            const lat = convertCoordinates(point.latitude);
-            if (isNaN(lng) || isNaN(lat)) {
-                console.warn(`Coordenadas inválidas para o ponto: ${JSON.stringify(point)}`);
-                return null;
-            }
-            const tipo = point.TIPO ? point.TIPO.toLowerCase().replace(/\s+/g, '-').replace('.', '') : 'outro';
-            const color = colors[tipo] || colors['outro'];
-            return {
-                type: 'Feature',
-                geometry: {
-                    type: 'Point',
-                    coordinates: [lng, lat]
-                },
-                properties: {
-                    name: point.NOME,
-                    bairro: point.BAIRRO,
-                    endereco: point.ENDEREÇO,
-                    tipo: point.TIPO,
-                    unidades: point.UNIDADES,
-                    unidadeTipo: point['Unidade-tipo'],
-                    populacao: point.POPULAÇÃO,
-                    areaConstruida: point['ÁREA CONSTRUÍDA'],
-                    investimento: point.INVESTIMENTO,
-                    aluguelM2: point['ALUGUEL R$/m²'],
-                    situacao: point.SITUAÇÃO,
-                    inicio: point.INÍCIO,
-                    entrega: point.ENTREGA,
-                    color: color,
-                    longitude: point.longitude,
-                    latitude: point.latitude
-                }
-            };
-        }).filter(feature => feature !== null)
-    };
-}
+  function updateHistogram(filtered, mode) {
+    const canvas = document.getElementById('chartCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const titleEl = document.getElementById('chartTitle');
+    if (chartInstance) chartInstance.destroy();
 
-function addMarkers(geojson) {
-    map.addSource('markers', {
-        type: 'geojson',
-        data: geojson
-    });
+    const currentMode = mode || "padrao";
+    const isStandard = currentMode === "padrao";
+    const prop = isStandard ? 'count' : (currentMode === "populacao" ? "_pop" : "_area");
 
-    map.addLayer({
-        id: 'markers',
-        type: 'circle',
-        source: 'markers',
-        paint: {
-            'circle-radius': 8,
-            'circle-color': ['get', 'color'],
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 2
-        }
-    });
+    if (titleEl) {
+      if (isStandard) titleEl.textContent = "Frequência por tipo";
+      else if (currentMode === "populacao") titleEl.textContent = "Top 10 população";
+      else if (currentMode === "area") titleEl.textContent = "Top 10 área construída";
+    }
 
-    map.on('click', 'markers', async (e) => {
-        const coordinates = e.features[0].geometry.coordinates.slice();
-        const properties = e.features[0].properties;
-        const popupContent = await createPopupContent(properties);
-
-        new mapboxgl.Popup()
-            .setLngLat(coordinates)
-            .setHTML(popupContent)
-            .addTo(map);
-    });
-
-    map.on('mouseenter', 'markers', () => {
-        map.getCanvas().style.cursor = 'pointer';
-    });
-
-    map.on('mouseleave', 'markers', () => {
-        map.getCanvas().style.cursor = '';
-    });
-}
-
-async function createPopupContent(properties) {
-    const streetViewUrl = getStreetViewImage(properties.latitude, properties.longitude);
-
-    return `
-        <div class="popup-content">
-            <h3>${properties.name}</h3>
-            <p><strong>Bairro:</strong> ${properties.bairro}</p>
-            <p><strong>Endereço:</strong> ${properties.endereco}</p>
-            <p><strong>Tipo:</strong> ${properties.tipo}</p>
-            <p><strong>Unidades:</strong> ${properties.unidades}</p>
-            <p><strong>Unidade-tipo:</strong> ${properties.unidadeTipo}</p>
-            <p><strong>POPULAÇÃO:</strong> ${properties.populacao}</p>
-            <p><strong>ÁREA CONSTRUÍDA:</strong> ${properties.areaConstruida}</p>
-            <p><strong>INVESTIMENTO:</strong> ${properties.investimento}</p>
-            <p><strong>R$/m² da obra:</strong> ${properties.aluguelM2}</p>
-            <p><strong>ALUGUEL R$/m²:</strong> ${properties.aluguelM2}</p>
-            <p><strong>Situação:</strong> ${properties.situacao}</p>
-            <p><strong>Início:</strong> ${properties.inicio}</p>
-            <p><strong>Entrega:</strong> ${properties.entrega}</p>
-            <img src="${streetViewUrl}" alt="Google Street View Image" />
-        </div>
-    `;
-}
-
-function getStreetViewImage(lat, lng) {
-    const streetViewUrl = `https://maps.googleapis.com/maps/api/streetview?size=200x200&location=${lat},${lng}&fov=120&source=outdoor&pitch=10&key=${GOOGLE_API_KEY}`;
-    return streetViewUrl;
-}
-
-function filterMarkers(data, typeFilter, bairroFilter, statusFilter) {
-    let filteredData = data.filter(point => {
-        const typeMatch = typeFilter === 'all' || point.TIPO.toLowerCase().replace(/\s+/g, '-').replace('.', '') === typeFilter;
-        const bairroMatch = bairroFilter === 'all' || point.BAIRRO.toLowerCase() === bairroFilter.toLowerCase();
-        const statusMatch = statusFilter === 'all' || (point.SITUAÇÃO && point.SITUAÇÃO.toLowerCase() === statusFilter.toLowerCase());
-        return typeMatch && bairroMatch && statusMatch;
-    });
-
-    const geojson = createGeoJSON(filteredData);
-
-    if (map.getSource('markers')) {
-        map.getSource('markers').setData(geojson);
+    let labels, dataValues, colors;
+    if (isStandard) {
+      const counts = {};
+      filtered.forEach(d => counts[d.TIPO] = (counts[d.TIPO] || 0) + 1);
+      const sortedKeys = Object.keys(counts).sort((a,b) => counts[b] - counts[a]);
+      labels = sortedKeys.map(splitLabel);
+      dataValues = sortedKeys.map(k => counts[k]);
+      colors = sortedKeys.map(l => (TYPE_COLOR[l] || "#000") + "CC");
     } else {
-        addMarkers(geojson);
+      const valid = filtered.filter(d => d[prop] !== null);
+      const sorted = [...valid].sort((a, b) => b[prop] - a[prop]).slice(0, 10);
+      labels = sorted.map(d => splitLabel(d.NOME));
+      dataValues = sorted.map(d => d[prop]);
+      colors = sorted.map(d => (TYPE_COLOR[d.TIPO] || "#CCCCCC") + "CC");
     }
 
-    updateSummaryTable(filteredData, data);
-}
+    chartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: { 
+        labels: labels, 
+        datasets: [{ data: dataValues, backgroundColor: colors, barPercentage: 0.9, categoryPercentage: 0.6 }] 
+      },
+      options: { 
+        indexAxis: 'y',
+        responsive: true, 
+        maintainAspectRatio: false, 
+        plugins: { 
+          legend: { display: false },
+          tooltip: {
+            enabled: true,
+            callbacks: {
+              title: (context) => {
+                const label = context[0].label;
+                return Array.isArray(label) ? label.join(' ') : label;
+              }
+            }
+          }
+        },
+        scales: { 
+          x: { beginAtZero: true, grid: { display: false } }, 
+          y: { 
+            ticks: { font: { size: 9, lineHeight: 1.0 }, autoSkip: false, padding: 5, crossAlign: 'far' },
+            grid: { display: true, drawBorder: false, color: 'rgba(0,0,0,0.05)' }
+          } 
+        },
+        layout: { padding: { left: 5, right: 15 } }
+      }
+    });
+  }
 
-function updateSummaryTable(filteredData, allData) {
-    const summaryTableBody = document.getElementById('summaryTableBody');
-    summaryTableBody.innerHTML = '';
+  function applyFilters() {
+    const currentMode = document.getElementById("sizeFilter")?.value || "padrao";
+    const typeVal = document.getElementById("typeFilter")?.value || "all";
+    const bairroVal = document.getElementById("bairroFilter")?.value || "all";
+    const statusVal = document.getElementById("statusFilter")?.value || "all";
 
-    const totals = calculateTotals(allData);
-    const filteredTotals = calculateTotals(filteredData);
+    const filtered = allData.filter(d => 
+      (typeVal === "all" || d.TIPO === typeVal) &&
+      (bairroVal === "all" || d.BAIRRO === bairroVal) &&
+      (statusVal === "all" || d.SITUAÇÃO === statusVal)
+    );
 
-    const rows = Object.keys(colors).map(type => {
-        const typeLabel = type.replace('res-', 'Res. ').replace('ocupação', 'Ocupação').replace('hostel', 'Hostel').replace('his', 'HIS').replace('hotel', 'Hotel');
-        const typeTotals = calculateTotals(allData.filter(point => point.TIPO && point.TIPO.toLowerCase().replace(/\s+/g, '-').replace('.', '') === type));
-        const filteredTypeTotals = calculateTotals(filteredData.filter(point => point.TIPO && point.TIPO.toLowerCase().replace(/\s+/g, '-').replace('.', '') === type));
+    const prop = currentMode === "populacao" ? "_pop" : "_area";
+    const geojson = {
+      type: "FeatureCollection",
+      features: filtered.map(p => ({
+        type: "Feature", 
+        geometry: { type: "Point", coordinates: [p._lng, p._lat] },
+        properties: { ...p, color: (currentMode !== "padrao" && p[prop] === null) ? "#CCCCCC" : (TYPE_COLOR[p.TIPO] || "#000000") }
+      }))
+    };
 
-        const populationPercentage = typeTotals.totalPopulation ? (filteredTypeTotals.totalPopulation / typeTotals.totalPopulation * 100).toFixed(2) : 0;
-        const unitsPercentage = typeTotals.totalUnits ? (filteredTypeTotals.totalUnits / typeTotals.totalUnits * 100).toFixed(2) : 0;
-        const itemCount = filteredData.filter(point => point.TIPO && point.TIPO.toLowerCase().replace(/\s+/g, '-').replace('.', '') === type).length;
+    if (!map.getSource("pts")) {
+      map.addSource("pts", { type: "geojson", data: geojson });
+      map.addLayer({
+        id: "pts-circle", type: "circle", source: "pts",
+        paint: { "circle-color": ["get", "color"], "circle-opacity": 0.8, "circle-stroke-width": 3, "circle-stroke-color": "#fff" }
+      });
+    } else { 
+      map.getSource("pts").setData(geojson); 
+    }
 
-        return `
-            <tr>
-                <td>${typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)} (${itemCount})</td>
-                <td>${filteredTypeTotals.totalPopulation} (${populationPercentage}%)</td>
-                <td>${filteredTypeTotals.totalUnits} (${unitsPercentage}%)</td>
-            </tr>
-        `;
-    }).join('');
+    const maxVal = Math.max(...filtered.map(d => d[prop] || 0), 1);
+    const rad = currentMode === "padrao" ? 7 : ["interpolate", ["linear"], ["get", prop], 0, 4, maxVal, 22];
+    map.setPaintProperty("pts-circle", "circle-radius", rad);
 
-    summaryTableBody.innerHTML = rows;
-}
+    const tbody = document.getElementById("summaryTableBody");
+    const tfoot = document.getElementById("summaryFooter");
+    if (tbody && tfoot) {
+      let tI = 0, tP = 0; tbody.innerHTML = "";
+      Object.keys(TYPE_COLOR).sort().forEach(t => {
+        const list = filtered.filter(d => d.TIPO === t);
+        if(list.length > 0) {
+          const sP = list.reduce((s,i)=>s+(i._pop || 0), 0);
+          tI += list.length; tP += sP;
+          tbody.innerHTML += `<tr><td>${t}</td><td>${list.length}</td><td>${sP}</td></tr>`;
+        }
+      });
+      tfoot.innerHTML = `<tr><td>TOTAL</td><td>${tI}</td><td>${tP}</td></tr>`;
+    }
+    updateHistogram(filtered, currentMode);
+  }
 
-function calculateTotals(data) {
-    let totalPopulation = 0;
-    let totalUnits = 0;
-
-    data.forEach(point => {
-        totalPopulation += parseInt(point.POPULAÇÃO) || 0;
-        totalUnits += parseInt(point.UNIDADES) || 0;
+  map.on("load", async () => {
+    document.getElementById("downloadCsv")?.addEventListener("click", downloadCSV);
+    const peris = [['recentro','#FF3B30'],['ircentro','#34C759'],['porto_digital','#007AFF']];
+    peris.forEach(p => {
+      map.addSource(p[0], { type: 'geojson', data: `./${p[0]}.geojson` });
+      map.addLayer({ id: p[0], type: 'line', source: p[0], layout: { visibility: 'none' }, paint: { 'line-color': p[1], 'line-width': 2.5, 'line-dasharray': [10, 8] } });
     });
 
-    return { totalPopulation, totalUnits };
-}
-
-async function initMap() {
-    const data = await loadGoogleSheetsData(dataUrl);
-
-    // Populate bairro filter options
-    const uniqueBairros = [...new Set(data.map(point => point.BAIRRO))];
-    const bairroFilter = document.getElementById('bairroFilter');
-    uniqueBairros.forEach(bairro => {
-        const option = document.createElement('option');
-        option.value = bairro;
-        option.textContent = bairro;
-        bairroFilter.appendChild(option);
+    ['recentro', 'ircentro', 'porto'].forEach(id => {
+      const el = document.getElementById(`check-${id}`);
+      if (el) el.addEventListener('change', e => map.setLayoutProperty(id === 'porto' ? 'porto_digital' : id, 'visibility', e.target.checked ? 'visible' : 'none'));
     });
 
-    const geojson = createGeoJSON(data);
-    addMarkers(geojson);
-    filterMarkers(data, 'all', 'all', 'all');
+    try {
+      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_TAB}?key=${GOOGLE_SHEETS_API_KEY}`);
+      const data = await res.json();
+      const headers = data.values[0];
+      
+      allData = data.values.slice(1).map(r => {
+        let obj = {}; headers.forEach((h, i) => obj[h] = r[i] ?? "");
+        const lat = parseFloat(obj.latitude?.toString().replace(",", "."));
+        const lng = parseFloat(obj.longitude?.toString().replace(",", "."));
+        return { 
+          ...obj, _lat: lat, _lng: lng, 
+          _pop: parseNumber(obj["POPULAÇÃO"]), 
+          _area: parseNumber(obj["ÁREA CONSTRUÍDA"]) 
+        };
+      }).filter(p => !isNaN(p._lat));
 
-    document.getElementById('typeFilter').addEventListener('change', (e) => {
-        filterMarkers(data, e.target.value, document.getElementById('bairroFilter').value, document.getElementById('statusFilter').value);
-    });
+      const legendGrid = document.getElementById("legendGrid");
+      if (legendGrid) {
+        legendGrid.innerHTML = "";
+        Object.keys(TYPE_COLOR).sort().forEach(t => {
+          legendGrid.innerHTML += `<div class="type-pill"><span class="dot" style="background:${TYPE_COLOR[t]}"></span>${t}</div>`;
+        });
+      }
 
-    document.getElementById('bairroFilter').addEventListener('change', (e) => {
-        filterMarkers(data, document.getElementById('typeFilter').value, e.target.value, document.getElementById('statusFilter').value);
-    });
+      ["typeFilter", "bairroFilter", "statusFilter"].forEach(id => {
+        const el = document.getElementById(id);
+        const prop = id === "typeFilter" ? "TIPO" : id === "bairroFilter" ? "BAIRRO" : "SITUAÇÃO";
+        const vals = [...new Set(allData.map(d => d[prop]).filter(Boolean))].sort();
+        el.innerHTML = `<option value="all">Todos</option>` + vals.map(v => `<option value="${v}">${v}</option>`).join("");
+      });
 
-    document.getElementById('statusFilter').addEventListener('change', (e) => {
-        filterMarkers(data, document.getElementById('typeFilter').value, document.getElementById('bairroFilter').value, e.target.value);
-    });
-}
+      ["typeFilter", "bairroFilter", "statusFilter", "sizeFilter"].forEach(id => document.getElementById(id).addEventListener("change", applyFilters));
+      applyFilters();
 
-initMap();
+      map.on('click', 'pts-circle', (e) => {
+        const p = e.features[0].properties;
+        const svUrl = `https://maps.googleapis.com/maps/api/streetview?size=400x240&location=${p._lat},${p._lng}&fov=120&pitch=15&source=outdoor&key=${GOOGLE_STREETVIEW_API_KEY}`;
+        new mapboxgl.Popup().setLngLat([p._lng, p._lat]).setHTML(`
+          <div class="popup-header"><h4>${p.NOME}</h4></div>
+          <img src="${svUrl}" class="sv-img" />
+          <div class="popup-body">
+            <p><strong>Bairro:</strong> ${p.BAIRRO}</p>
+            <p><strong>Tipo:</strong> ${p.TIPO}</p>
+            <p><strong>Situação:</strong> ${p.SITUAÇÃO}</p>
+            <p><strong>Unidades:</strong> ${p.UNIDADES} (${p['Unidade-tipo'] || 'não informado'})</p>
+            <p><strong>População:</strong> ${p.POPULAÇÃO || 'pendente'}</p>
+            <p><strong>Área:</strong> ${p['ÁREA CONSTRUÍDA'] || 'pendente'}</p>
+            <p><strong>Investimento:</strong> ${p.INVESTIMENTO || 'não informado'}</p>
+            <p><strong>Cronograma:</strong> ${p.INÍCIO || 'não definido'} até ${p.ENTREGA || 'não definido'}</p>
+            <p style="font-size:9px; color:#999; margin-top:8px;">DSQFL: ${p.DSQFL}</p>
+          </div>
+        `).addTo(map);
+      });
+    } catch (e) { console.error(e); }
+  });
+})();
